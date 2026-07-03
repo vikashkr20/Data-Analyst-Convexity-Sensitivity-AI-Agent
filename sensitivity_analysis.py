@@ -45,11 +45,8 @@ def run_sensitivity_analysis():
         pnl_analytical = (-port_dur * dy + 0.5 * port_conv * (dy**2)) * total_mv_base
         
         # 2. ML price predictions
-        # For each bond, we shift its YTM, recalculate its ModDur and Convexity,
-        # scale the features, predict its price, and sum the market values.
-        mv_rf = 0
-        mv_xgb = 0
-        mv_nn = 0
+        features_list = []
+        quantities = []
         
         for idx, row in df.iterrows():
             face = row['FaceValue']
@@ -78,20 +75,23 @@ def run_sensitivity_analysis():
             price_sh = bond_price(face, coupon, ytm_shifted, years, freq)
             conv_shifted = conv_sum / (price_sh * (1 + r)**2) if price_sh > 0 else 0
             
-            # Create feature vector
-            features = np.array([[coupon, years, ytm_shifted, mod_dur_shifted, conv_shifted]])
-            features_scaled = scaler.transform(features)
+            features_list.append([coupon, years, ytm_shifted, mod_dur_shifted, conv_shifted])
+            quantities.append(quantity)
             
-            # Predict clean prices
-            p_rf = rf.predict(features_scaled)[0]
-            p_xgb = xgb.predict(features_scaled)[0]
-            p_nn = nn.predict(features_scaled)[0]
-            
-            # Add to portfolio market values (Price * Quantity / 100)
-            mv_rf += p_rf * quantity / 100
-            mv_xgb += p_xgb * quantity / 100
-            mv_nn += p_nn * quantity / 100
-            
+        features_df = pd.DataFrame(features_list, columns=['CouponRate', 'YearsToMaturity', 'YieldToMaturity', 'ModifiedDuration', 'Convexity'])
+        features_scaled = scaler.transform(features_df)
+        quantities = np.array(quantities)
+        
+        # Bulk predict clean prices
+        preds_rf = rf.predict(features_scaled)
+        preds_xgb = xgb.predict(features_scaled)
+        preds_nn = nn.predict(features_scaled)
+        
+        # Compute portfolio market values (Price * Quantity / 100)
+        mv_rf = np.sum(preds_rf * quantities / 100)
+        mv_xgb = np.sum(preds_xgb * quantities / 100)
+        mv_nn = np.sum(preds_nn * quantities / 100)
+        
         pnl_rf = mv_rf - total_mv_base
         pnl_xgb = mv_xgb - total_mv_base
         pnl_nn = mv_nn - total_mv_base
